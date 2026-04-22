@@ -128,10 +128,12 @@ with c4: st.metric("🌍 Internacionales", int(df["internacional"].sum()))
 st.divider()
 
 # ─── Tabs ─────────────────────────────────────────────────────────────────────
-tab_todos, tab_equipamiento, tab_ciencia, tab_regionales, tab_tabla = st.tabs([
+tab_todos, tab_equipamiento, tab_ciencia, tab_colab, tab_desarrollo, tab_regionales, tab_tabla = st.tabs([
     "⭐ Todos por Prioridad",
     "🔬 Equipamiento",
     "🔭 Ciencia e I+D",
+    "🤝 Colaboración",
+    "🛰️ Desarrollo Instrumentos",
     "📍 Por Región",
     "📊 Tabla y Descarga",
 ])
@@ -270,7 +272,137 @@ with tab_ciencia:
 
 
 # ─────────────────────────────────────
-# TAB 4 — Por Región Volcánica
+# TAB 4 — Colaboración (SERNAGEOMIN + socios)
+# ─────────────────────────────────────
+with tab_colab:
+    st.markdown("""
+    **SERNAGEOMIN puede acceder a muchos fondos a través de COLABORACIONES estratégicas.**
+    Estos fondos no son postulación directa — requieren un socio (universidad, municipio, GORE,
+    institución internacional). Aquí están organizados por tipo de colaboración.
+    """)
+
+    # Detectar fondos colaborativos: empiezan con [COLABORACIÓN o requieren consorcio
+    colab_mask = (
+        df["descripcion"].fillna("").str.contains(r"\[COLABORACIÓN", case=False, regex=True) |
+        df["descripcion"].fillna("").str.contains("consorcio|universidad|socio|alianza|contraparte",
+                                                   case=False, regex=True)
+    )
+    colab_df = df[colab_mask].sort_values("score_ovdas", ascending=False)
+
+    # Categorizar por tipo
+    def _tipo_colab(desc: str) -> str:
+        d = str(desc).lower()
+        if "bilateral" in d or "japón" in d or "eeuu" in d or "alemania" in d:
+            return "🌏 Internacional Bilateral"
+        if "multilateral" in d or "undrr" in d or "naciones unidas" in d or "horizon" in d:
+            return "🌐 Multilateral"
+        if "gobierno-a-gobierno" in d or "bid" in d or "banco mundial" in d:
+            return "🏛️ Gobierno-a-Gobierno"
+        if "consorcio" in d or "universidad" in d or "anid" in d:
+            return "🎓 Consorcio con Universidad"
+        if "municipio" in d or "municipal" in d or "gore" in d:
+            return "📍 GORE / Municipio"
+        if "red científica" in d or "red internacional" in d or "smithsonian" in d or "gem" in d:
+            return "🔬 Red Científica Internacional"
+        return "🤝 Colaboración general"
+
+    colab_df = colab_df.copy()
+    colab_df["_categoria_colab"] = colab_df["descripcion"].apply(_tipo_colab)
+
+    categorias = colab_df["_categoria_colab"].value_counts()
+    st.caption(f"{len(colab_df)} fondos colaborativos identificados en {len(categorias)} categorías")
+
+    # Mostrar cada categoría como expander
+    for cat in categorias.index:
+        fondos_cat = colab_df[colab_df["_categoria_colab"] == cat]
+        with st.expander(f"{cat} — {len(fondos_cat)} fondos", expanded=True):
+            for _, row in fondos_cat.iterrows():
+                score = int(row.get("score_ovdas", 0))
+                estado = str(row.get("estado", "desconocido")).lower()
+                intl = "🌍 " if row.get("internacional", 0) == 1 else ""
+                nombre = str(row.get('nombre','')).replace("[COLABORACIÓN] ", "")
+                st.markdown(
+                    f"**{intl}{nombre}** "
+                    f"<span class='estado-{estado}'>{badge_estado(estado)}</span> "
+                    f"— {formato_monto(row)} — Score OVDAS: {score}%",
+                    unsafe_allow_html=True
+                )
+                desc = str(row.get("descripcion", "")).replace("[COLABORACIÓN", "**COLABORACIÓN").replace("] ", "** — ")
+                st.caption(desc[:400] + ("..." if len(desc) > 400 else ""))
+                reqs = parse_list(row.get("requisitos", []))
+                if reqs:
+                    st.caption("🔑 **Vía de acceso:** " + " · ".join(reqs[:3]))
+                if str(row.get("url","")) not in ["","nan","None"]:
+                    st.markdown(f"[🔗 Más info]({row['url']})")
+                st.write("---")
+
+
+# ─────────────────────────────────────
+# TAB 5 — Desarrollo de Instrumentos en Chile
+# ─────────────────────────────────────
+with tab_desarrollo:
+    st.markdown("""
+    ### 🛰️ Desarrollo de Instrumentos Científicos en Chile
+
+    En vez de comprar equipos importados (sismómetros, DOAS, multígas, cámaras termales),
+    estos fondos permiten **desarrollar/fabricar instrumentos localmente** en consorcio con
+    universidades chilenas. Esto crea capacidades nacionales, reduce dependencia de proveedores
+    extranjeros, y genera transferencia tecnológica.
+
+    **Instrumentos candidatos para desarrollo doméstico:**
+    - 📡 Sismómetros de banda ancha (colaboración con depto. Geofísica UChile/USACH)
+    - 🌫️ DOAS / Espectrómetros para gases volcánicos (UFRO, UdeC)
+    - 🌋 Cámaras termales y sensores multígas (consorcio ingeniería electrónica)
+    - 📶 Sistemas de telemetría satelital / LoRa para estaciones remotas
+    """)
+
+    # Filtrar fondos que financien I+D / desarrollo tecnológico
+    dev_keywords = ["i+d", "i\\+d", "desarrollo", "innovación", "tecnología", "idea",
+                     "fondef", "fondecyt", "anillos", "fic-r", "fondap", "corfo"]
+    dev_mask = (
+        df["nombre"].str.lower().str.contains("|".join(dev_keywords), na=False, regex=True) |
+        df["tipo"].isin(["ciencia"])
+    ) & (df["score_ovdas"] >= 30)
+    dev_df = df[dev_mask].sort_values("score_ovdas", ascending=False)
+
+    st.caption(f"{len(dev_df)} fondos aptos para desarrollo de instrumentos domésticos")
+
+    for _, row in dev_df.iterrows():
+        score = int(row.get("score_ovdas", 0))
+        estado = str(row.get("estado", "desconocido")).lower()
+        intl = "🌍 " if row.get("internacional", 0) == 1 else ""
+        nombre = str(row.get('nombre','')).replace("[COLABORACIÓN] ", "")
+
+        with st.expander(
+            f"{'🟢' if estado=='abierto' else '🟡' if estado=='proximo' else '🔴'} "
+            f"{intl}{nombre} — Score: {score}%",
+            expanded=(score >= 70 and estado in ["abierto","proximo"])
+        ):
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.write(f"**Organismo:** {row.get('organismo','—')}")
+                st.write(f"**Monto:** {formato_monto(row)}")
+                st.write(f"**Estado:** {badge_estado(estado)}")
+            with col_b:
+                if str(row.get("fecha_cierre","")) not in ["","nan","None"]:
+                    st.write(f"**Cierre:** {row['fecha_cierre']}")
+                if str(row.get("url","")) not in ["","nan","None"]:
+                    st.write(f"[🔗 Convocatoria]({row['url']})")
+
+            desc = str(row.get("descripcion",""))
+            if desc and desc not in ["","nan","None"]:
+                st.write(desc)
+
+            # Sugerencia de socios académicos
+            st.info(
+                "💡 **Socios académicos sugeridos:** Dpto. Geofísica UChile, "
+                "Dpto. Ciencias Físicas UFRO, CIGIDEN (USACH/UCN/UTFSM/UC), "
+                "CR2 (Center for Climate & Resilience), CSN (Centro Sismológico Nacional)"
+            )
+
+
+# ─────────────────────────────────────
+# TAB 6 — Por Región Volcánica
 # ─────────────────────────────────────
 with tab_regionales:
     st.markdown("Fondos GORE en regiones con **volcanes activos** relevantes para monitoreo.")
